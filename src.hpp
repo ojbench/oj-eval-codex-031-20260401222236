@@ -6,6 +6,7 @@
 #include <vector>
 #include <memory>
 #include <unordered_set>
+#include <mutex>
 
 class pylist {
 public:
@@ -16,6 +17,28 @@ private:
     Kind kind_;
     int  iv_ = 0;
     std::shared_ptr<std::vector<pylist>> vec_;
+
+    // Global registry to break cycles at program end
+    struct Registry {
+        std::mutex mtx;
+        std::vector<std::weak_ptr<std::vector<pylist>>> pools;
+        void add(const std::shared_ptr<std::vector<pylist>> &p) {
+            std::lock_guard<std::mutex> lk(mtx);
+            pools.emplace_back(p);
+        }
+        ~Registry() {
+            std::lock_guard<std::mutex> lk(mtx);
+            for (auto &w : pools) {
+                if (auto sp = w.lock()) {
+                    sp->clear();
+                }
+            }
+        }
+    };
+    static Registry &registry() {
+        static Registry r;
+        return r;
+    }
 
     static void print_impl(std::ostream &os, const pylist &v,
                            std::unordered_set<const void*> &stack) {
@@ -44,7 +67,9 @@ private:
 
 public:
     // Default constructs an empty list
-    pylist() : kind_(Kind::LIST), iv_(0), vec_(std::make_shared<std::vector<pylist>>()) {}
+    pylist() : kind_(Kind::LIST), iv_(0), vec_(std::make_shared<std::vector<pylist>>()) {
+        registry().add(vec_);
+    }
 
     // Construct from integer (implicit)
     pylist(int v) : kind_(Kind::INT), iv_(v), vec_(nullptr) {}
@@ -103,4 +128,3 @@ public:
 };
 
 #endif // PYLIST_H
-
